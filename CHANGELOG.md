@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-13
+
 ### Fixed
 - atomicfile: a second save in the same second no longer fails on its backup; the backup takes the next free name (`-1`, `-2`, ...) and still never writes through an existing file
 - atomicfile: a verification failure after the rename now restores the original content (the restore was refused by the O_EXCL backup copy and the error was ignored)

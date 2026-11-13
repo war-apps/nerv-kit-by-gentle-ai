@@ -92,36 +92,102 @@ func TestSave_BackupKeepsSourcePermissions(t *testing.T) {
 	}
 }
 
-func TestSave_RefusesToOverwriteAnExistingBackupPath(t *testing.T) {
+func TestSave_NeverWritesThroughAnExistingBackupPath(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "file.txt")
 	if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 9, 29, 12, 34, 56, 0, time.UTC)
-	backupPath := path + ".bak-test-20260929-123456"
-	if err := os.WriteFile(backupPath, []byte("pre-existing\n"), 0o644); err != nil {
+	taken := path + ".bak-test-20260929-123456"
+	if err := os.WriteFile(taken, []byte("pre-existing\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := atomicfile.Save(path, []byte("new\n"), atomicfile.Options{Now: now, BackupSuffix: "bak-test-"})
-	if err == nil {
-		t.Fatal("Save() error = nil, want an error when the backup path already exists")
+	backup, err := atomicfile.Save(path, []byte("new\n"), atomicfile.Options{Now: now, BackupSuffix: "bak-test-"})
+	if err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if backup == taken {
+		t.Fatalf("backup = %q, want a fresh name next to the existing file", backup)
 	}
 
-	content, readErr := os.ReadFile(backupPath)
+	content, readErr := os.ReadFile(taken)
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
 	if string(content) != "pre-existing\n" {
-		t.Errorf("pre-existing backup content = %q, want it untouched", content)
+		t.Errorf("pre-existing file content = %q, want it untouched", content)
 	}
-	current, readErr := os.ReadFile(path)
+	saved, readErr := os.ReadFile(backup)
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
-	if string(current) != "old\n" {
-		t.Errorf("path content = %q, want it untouched (new content never written)", current)
+	if string(saved) != "old\n" {
+		t.Errorf("backup content = %q, want the previous content", saved)
+	}
+}
+
+func TestSave_TwoSavesInTheSameSecondKeepBothBackups(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "file.txt")
+	if err := os.WriteFile(path, []byte("v1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 29, 12, 34, 56, 0, time.UTC)
+	opts := atomicfile.Options{Now: now, BackupSuffix: "bak-test-"}
+
+	first, err := atomicfile.Save(path, []byte("v2\n"), opts)
+	if err != nil {
+		t.Fatalf("first Save() error = %v", err)
+	}
+	second, err := atomicfile.Save(path, []byte("v3\n"), opts)
+	if err != nil {
+		t.Fatalf("second Save() in the same second error = %v", err)
+	}
+	if first == second {
+		t.Fatalf("both backups = %q, want distinct names", first)
+	}
+	for backup, want := range map[string]string{first: "v1\n", second: "v2\n"} {
+		got, readErr := os.ReadFile(backup)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if string(got) != want {
+			t.Errorf("%s = %q, want %q", filepath.Base(backup), got, want)
+		}
+	}
+}
+
+func TestSave_VerifyFailureAfterTheRename_RestoresTheOriginal(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "file.txt")
+	if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	verify := func([]byte) error {
+		calls++
+		if calls == 2 { // the re-read after the rename
+			return errors.New("bad content on disk")
+		}
+		return nil
+	}
+
+	_, err := atomicfile.Save(path, []byte("new\n"), atomicfile.Options{
+		Now:          time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC),
+		BackupSuffix: "bak-test-",
+		Verify:       verify,
+	})
+	if err == nil {
+		t.Fatal("expected a verification error")
+	}
+	after, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != "old\n" {
+		t.Errorf("path = %q after a failed post-rename verification, want the original restored", after)
 	}
 }
 

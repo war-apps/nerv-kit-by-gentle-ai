@@ -42,8 +42,8 @@ func Save(path string, data []byte, opts Options) (backupPath string, err error)
 	existed := false
 	if _, statErr := os.Stat(path); statErr == nil {
 		existed = true
-		backupPath = fmt.Sprintf("%s.%s%s", path, opts.BackupSuffix, opts.Now.Format("20060102-150405"))
-		if cpErr := copyFile(path, backupPath); cpErr != nil {
+		var cpErr error
+		if backupPath, cpErr = backup(path, opts); cpErr != nil {
 			return "", cpErr
 		}
 	} else if errors.Is(statErr, fs.ErrNotExist) {
@@ -61,7 +61,7 @@ func Save(path string, data []byte, opts Options) (backupPath string, err error)
 			return "", writeErr
 		}
 		if existed {
-			_ = copyFile(backupPath, path)
+			_ = restore(backupPath, path)
 		}
 		return backupPath, writeErr
 	}
@@ -69,13 +69,53 @@ func Save(path string, data []byte, opts Options) (backupPath string, err error)
 	return backupPath, nil
 }
 
+// maxBackupAttempts bounds the names backup tries for one Save: the
+// timestamped name, then the same name with "-1" ... "-99".
+const maxBackupAttempts = 100
+
+// backup copies path to "<path>.<BackupSuffix><timestamp>", or to that name
+// with "-N" appended when it is already taken (two saves in the same second,
+// or an unrelated file there), and returns the name it used. It never
+// writes through an existing file or symlink.
+func backup(path string, opts Options) (string, error) {
+	base := fmt.Sprintf("%s.%s%s", path, opts.BackupSuffix, opts.Now.Format("20060102-150405"))
+	for i := 0; i < maxBackupAttempts; i++ {
+		name := base
+		if i > 0 {
+			name = fmt.Sprintf("%s-%d", base, i)
+		}
+		err := copyFile(path, name)
+		if err == nil {
+			return name, nil
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("creating backup of %s: %d names after %s are taken", path, maxBackupAttempts, base)
+}
+
+// restore puts the backup's content back over path. path exists at this
+// point, so it is replaced atomically rather than created; it keeps the
+// backup's permission bits, which are the original file's.
+func restore(backupPath, path string) error {
+	data, err := os.ReadFile(backupPath)
+	if err != nil {
+		return err
+	}
+	mode := fs.FileMode(0o600)
+	if info, statErr := os.Stat(backupPath); statErr == nil {
+		mode = info.Mode().Perm()
+	}
+	return writeAtomic(path, data, nil, mode)
+}
+
 // copyFile copies src to dst, keeping src's own permission bits (0600 when
 // they cannot be read) instead of a fixed mode: a backup of a user config
 // that holds secrets must not become more permissive than its source. dst
 // is created with O_EXCL so copyFile never writes through a file or
-// symlink that already exists there -- the backup name is timestamped, so
-// a collision is unexpected and is reported as an error instead of
-// silently overwriting whatever is already at that path.
+// symlink that already exists there; that case returns an error wrapping
+// fs.ErrExist, which backup answers by trying the next name.
 func copyFile(src, dst string) error {
 	data, err := os.ReadFile(src)
 	if err != nil {

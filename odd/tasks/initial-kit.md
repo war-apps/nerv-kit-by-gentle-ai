@@ -18,8 +18,10 @@ Branch: `feat/initial-kit` from `develop`. Module `github.com/war-apps/nerv-kit-
 
 | ID | Specs | Route | Status | Commit |
 |---|---|---|---|---|
-| T1 | K1-K7 | delegated writer | pending | |
+| T1 | K1-K7 | delegated writer | done: RED observed per package, GREEN; gofmt/vet/build clean; linux vet and windows build cross-checked; parent reran `go test -count=1 ./...` (all ok) | f8a791b, 7cca3ad, 4f091e7, 4cf24b6, 9317af2, 31e3fb2, 8c3b94b |
 
 ## Log
 
 - **L1** (2026-11-13) API approved by the user ("ok") from the P1 mapping (nerv master doc L4).
+- **L2** (2026-11-13) Implemented in 7 commits. Deviations: `MaterializeBundle` lists extension folders by their `plugin.json` only (nerv's provider/bundle graph stays in nerv); `InstalledPlugins` wrapper and nerv URL constants dropped (callers pass `APIBase`, `DownloadBase`, install hint); `PlatformError` instead of a refusal package; `aiworkflow.Save` chmods after `atomicfile.Save` to honor a non-default mode.
+- **L3** (2026-11-13) Security review finding fixed (4cf24b6): backups were written 0644 regardless of the source (a 0600 user config backup became world-readable); now the backup keeps the source mode (0600 fallback) and is created with O_EXCL. The same bug exists in nerv `internal/atomicfile` (follow-up there).

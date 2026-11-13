@@ -69,12 +69,32 @@ func Save(path string, data []byte, opts Options) (backupPath string, err error)
 	return backupPath, nil
 }
 
+// copyFile copies src to dst, keeping src's own permission bits (0600 when
+// they cannot be read) instead of a fixed mode: a backup of a user config
+// that holds secrets must not become more permissive than its source. dst
+// is created with O_EXCL so copyFile never writes through a file or
+// symlink that already exists there -- the backup name is timestamped, so
+// a collision is unexpected and is reported as an error instead of
+// silently overwriting whatever is already at that path.
 func copyFile(src, dst string) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dst, data, 0o644)
+	mode := fs.FileMode(0o600)
+	if info, statErr := os.Stat(src); statErr == nil {
+		mode = info.Mode().Perm()
+	}
+
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return fmt.Errorf("creating backup %s: %w", dst, err)
+	}
+	if _, err := out.Write(data); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 // writeAtomic writes data to a temp file next to path and renames it over

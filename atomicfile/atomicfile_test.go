@@ -65,6 +65,66 @@ func TestSave_BacksUpExistingFileWithTimestampedSuffix(t *testing.T) {
 	}
 }
 
+func TestSave_BackupKeepsSourcePermissions(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "file.txt")
+	if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC)
+
+	backup, err := atomicfile.Save(path, []byte("new\n"), atomicfile.Options{Now: now, BackupSuffix: "bak-test-"})
+	if err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if runtime.GOOS == "windows" {
+		return
+	}
+	info, err := os.Stat(backup)
+	if err != nil {
+		t.Fatalf("stat backup: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("backup mode = %v, want the source file's 0600 (a 0600 config can hold secrets)", info.Mode().Perm())
+	}
+}
+
+func TestSave_RefusesToOverwriteAnExistingBackupPath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "file.txt")
+	if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 29, 12, 34, 56, 0, time.UTC)
+	backupPath := path + ".bak-test-20260929-123456"
+	if err := os.WriteFile(backupPath, []byte("pre-existing\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := atomicfile.Save(path, []byte("new\n"), atomicfile.Options{Now: now, BackupSuffix: "bak-test-"})
+	if err == nil {
+		t.Fatal("Save() error = nil, want an error when the backup path already exists")
+	}
+
+	content, readErr := os.ReadFile(backupPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(content) != "pre-existing\n" {
+		t.Errorf("pre-existing backup content = %q, want it untouched", content)
+	}
+	current, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(current) != "old\n" {
+		t.Errorf("path content = %q, want it untouched (new content never written)", current)
+	}
+}
+
 func TestSave_NoLeftoverTempFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "file.txt")

@@ -116,11 +116,14 @@ func MaterializeBundle(core, extensions fs.FS, dest string, m Marketplace) (Resu
 		result.Removed = append(result.Removed, removed...)
 	}
 
-	description, err := readPluginDescription(core)
+	coreName, description, err := readPluginNameAndDescription(core)
 	if err != nil {
 		return result, err
 	}
-	plugins := []marketplacePlugin{{Name: m.Name, Source: "./plugin", Description: description}}
+	if coreName == "" {
+		coreName = m.Name
+	}
+	plugins := []marketplacePlugin{{Name: coreName, Source: "./plugin", Description: description}}
 	for _, name := range extNames {
 		sub, err := fs.Sub(extensions, name)
 		if err != nil {
@@ -371,17 +374,26 @@ func removeEmptyDirs(root string) error {
 }
 
 func readPluginDescription(src fs.FS) (string, error) {
+	_, description, err := readPluginNameAndDescription(src)
+	return description, err
+}
+
+// readPluginNameAndDescription reads the name and description of src's own
+// .claude-plugin/plugin.json. An empty name means the manifest has none;
+// callers that need a name fall back to another source.
+func readPluginNameAndDescription(src fs.FS) (name, description string, err error) {
 	data, err := fs.ReadFile(src, pluginManifestPath)
 	if err != nil {
-		return "", fmt.Errorf("reading %s: %w", pluginManifestPath, err)
+		return "", "", fmt.Errorf("reading %s: %w", pluginManifestPath, err)
 	}
 	var manifest struct {
+		Name        string `json:"name"`
 		Description string `json:"description"`
 	}
 	if err := json.Unmarshal(data, &manifest); err != nil {
-		return "", fmt.Errorf("parsing %s: %w", pluginManifestPath, err)
+		return "", "", fmt.Errorf("parsing %s: %w", pluginManifestPath, err)
 	}
-	return manifest.Description, nil
+	return manifest.Name, manifest.Description, nil
 }
 
 func writeMarketplaceManifest(dest string, m Marketplace, plugins []marketplacePlugin, result *Result) error {

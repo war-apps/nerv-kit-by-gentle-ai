@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- claudeplugin: `Materialize`/`MaterializeBundle` now name the core plugin's marketplace entry after its own `.claude-plugin/plugin.json` `name`, falling back to the marketplace name only when the manifest has none; it previously always used the marketplace name, which broke `claude plugin install` whenever the core plugin's name differed from its marketplace's
+
 ## [0.1.1] - 2026-11-13
 
 ### Fixed

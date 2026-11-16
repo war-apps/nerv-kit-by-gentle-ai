@@ -99,6 +99,77 @@ func TestMaterialize_WritesTreeByteExact(t *testing.T) {
 	}
 }
 
+func TestMaterialize_CorePluginEntryUsesItsOwnManifestName(t *testing.T) {
+	src := fstest.MapFS{
+		".claude-plugin/plugin.json": &fstest.MapFile{
+			Data: []byte(`{"name":"task","version":"1.2.3","description":"Tasks"}`),
+		},
+		"agents/aoba.md": &fstest.MapFile{Data: []byte("# Aoba\n")},
+	}
+	dest := t.TempDir()
+	marketplace := claudeplugin.Marketplace{Name: "nerv-task", OwnerName: "Test Owner"}
+
+	if _, err := claudeplugin.Materialize(src, dest, marketplace); err != nil {
+		t.Fatalf("Materialize returned error: %v", err)
+	}
+
+	var manifest struct {
+		Name    string `json:"name"`
+		Plugins []struct {
+			Name        string `json:"name"`
+			Source      string `json:"source"`
+			Description string `json:"description"`
+		} `json:"plugins"`
+	}
+	if err := json.Unmarshal(readDestFile(t, dest, ".claude-plugin/marketplace.json"), &manifest); err != nil {
+		t.Fatalf("parsing marketplace.json: %v", err)
+	}
+	if manifest.Name != "nerv-task" {
+		t.Errorf("marketplace.name = %q, want %q", manifest.Name, "nerv-task")
+	}
+	if len(manifest.Plugins) != 1 {
+		t.Fatalf("expected exactly one plugin entry, got %d", len(manifest.Plugins))
+	}
+	p := manifest.Plugins[0]
+	if p.Name != "task" {
+		t.Errorf("core plugin entry name = %q, want %q (from plugin.json, not the marketplace name)", p.Name, "task")
+	}
+	if p.Source != "./plugin" {
+		t.Errorf("core plugin entry source = %q, want %q", p.Source, "./plugin")
+	}
+	if p.Description != "Tasks" {
+		t.Errorf("core plugin entry description = %q, want %q", p.Description, "Tasks")
+	}
+}
+
+func TestMaterialize_EqualNamesCaseMarketplaceJSONIsUnchanged(t *testing.T) {
+	src := sampleSrc()
+	dest := t.TempDir()
+
+	if _, err := claudeplugin.Materialize(src, dest, testMarketplace()); err != nil {
+		t.Fatalf("Materialize returned error: %v", err)
+	}
+
+	want := "{\n" +
+		"  \"name\": \"kit-test\",\n" +
+		"  \"owner\": {\n" +
+		"    \"name\": \"Test Owner\"\n" +
+		"  },\n" +
+		"  \"plugins\": [\n" +
+		"    {\n" +
+		"      \"name\": \"kit-test\",\n" +
+		"      \"source\": \"./plugin\",\n" +
+		"      \"description\": \"Test plugin\"\n" +
+		"    }\n" +
+		"  ]\n" +
+		"}\n"
+
+	got := readDestFile(t, dest, ".claude-plugin/marketplace.json")
+	if string(got) != want {
+		t.Errorf("marketplace.json changed for the equal-names case:\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
 func TestMaterialize_FilePermissions(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX permission bits are not meaningfully enforced by the Windows filesystem")
